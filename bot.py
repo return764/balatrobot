@@ -1,15 +1,14 @@
 #!/usr/bin/python3
 
-import sys
-import json
 import socket
 import time
 from enum import Enum
-from gamestates import cache_state
-import subprocess
 import random
 
-
+# 1 选牌 -> 2 记分 -> 3 发牌 -> 1 选牌
+# 19 下一轮 -> 8 点击收钱 -> 5 进入商店
+# 7 选择盲注 -> 1 选牌
+# 2 记分不通过 -> 19下一回合 -> 4 游戏结束
 class State(Enum):
     SELECTING_HAND = 1
     HAND_PLAYED = 2
@@ -33,25 +32,25 @@ class State(Enum):
 
 
 class Actions(Enum):
-    SELECT_BLIND = 1
-    SKIP_BLIND = 2
-    PLAY_HAND = 3
-    DISCARD_HAND = 4
-    END_SHOP = 5
-    REROLL_SHOP = 6
-    BUY_CARD = 7
-    BUY_VOUCHER = 8
-    BUY_BOOSTER = 9
-    SELECT_BOOSTER_CARD = 10
-    SKIP_BOOSTER_PACK = 11
-    SELL_JOKER = 12
-    USE_CONSUMABLE = 13
-    SELL_CONSUMABLE = 14
-    REARRANGE_JOKERS = 15
-    REARRANGE_CONSUMABLES = 16
-    REARRANGE_HAND = 17
-    PASS = 18
-    START_RUN = 19
+    SELECT_BLIND = 1 #
+    SKIP_BLIND = 2 #
+    PLAY_HAND = 3 #
+    DISCARD_HAND = 4 #
+    END_SHOP = 5 #
+    REROLL_SHOP = 6 #
+    BUY_CARD = 7 #
+    BUY_VOUCHER = 8 #?
+    BUY_BOOSTER = 9 #?
+    SELECT_BOOSTER_CARD = 10 #
+    SKIP_BOOSTER_PACK = 11 #
+    SELL_JOKER = 12 #
+    USE_CONSUMABLE = 13 #
+    SELL_CONSUMABLE = 14 #
+    REARRANGE_JOKERS = 15 #
+    REARRANGE_CONSUMABLES = 16 # no required
+    REARRANGE_HAND = 17 # no required
+    PASS = 18 # ?
+    START_RUN = 19 # no required
     SEND_GAMESTATE = 20
 
 
@@ -62,7 +61,7 @@ class Bot:
         stake: int = 1,
         seed: str = None,
         challenge: str = None,
-        bot_port: int = 12346,
+        bot_port: int = 12345,
     ):
         self.G = None
         self.deck = deck
@@ -74,60 +73,10 @@ class Bot:
 
         self.addr = ("localhost", self.bot_port)
         self.running = False
-        self.balatro_instance = None
-
         self.sock = None
 
         self.state = {}
-
-    def skip_or_select_blind(self):
-        raise NotImplementedError(
-            "Error: Bot.skip_or_select_blind must be implemented."
-        )
-
-    def select_cards_from_hand(self):
-        raise NotImplementedError(
-            "Error: Bot.select_cards_from_hand must be implemented."
-        )
-
-    def select_shop_action(self):
-        raise NotImplementedError("Error: Bot.select_shop_action must be implemented.")
-
-    def select_booster_action(self):
-        raise NotImplementedError(
-            "Error: Bot.select_booster_action must be implemented."
-        )
-
-    def sell_jokers(self):
-        raise NotImplementedError("Error: Bot.sell_jokers must be implemented.")
-
-    def rearrange_jokers(self):
-        raise NotImplementedError("Error: Bot.rearrange_jokers must be implemented.")
-
-    def use_or_sell_consumables(self):
-        raise NotImplementedError(
-            "Error: Bot.use_or_sell_consumables must be implemented."
-        )
-
-    def rearrange_consumables(self):
-        raise NotImplementedError(
-            "Error: Bot.rearrange_consumables must be implemented."
-        )
-
-    def rearrange_hand(self):
-        raise NotImplementedError("Error: Bot.rearrange_hand must be implemented.")
-
-    def start_balatro_instance(self):
-        balatro_exec_path = (
-            r"C:\Program Files (x86)\Steam\steamapps\common\Balatro\Balatro.exe"
-        )
-        self.balatro_instance = subprocess.Popen(
-            [balatro_exec_path, str(self.bot_port)]
-        )
-
-    def stop_balatro_instance(self):
-        if self.balatro_instance:
-            self.balatro_instance.kill()
+        self.last_state = None
 
     def sendcmd(self, cmd, **kwargs):
         msg = bytes(cmd, "utf-8")
@@ -140,106 +89,92 @@ class Bot:
             if isinstance(x, Actions):
                 result.append(x.name)
             elif type(x) is list:
-                result.append(",".join([str(y) for y in x]))
+                result.append(f"[{','.join([str(y) for y in x])}]")
             else:
                 result.append(str(x))
 
         return "|".join(result)
 
-    def verifyimplemented(self):
-        try:
-            self.skip_or_select_blind(self, {})
-            self.select_cards_from_hand(self, {})
-            self.select_shop_action(self, {})
-            self.select_booster_action(self, {})
-            self.sell_jokers(self, {})
-            self.rearrange_jokers(self, {})
-            self.use_or_sell_consumables(self, {})
-            self.rearrange_consumables(self, {})
-            self.rearrange_hand(self, {})
-        except NotImplementedError as e:
-            print(e)
-            sys.exit(0)
-        except:
-            pass
-
     def random_seed(self):
         # e.g. 1OGB5WO
         return "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=7))
 
-    def chooseaction(self):
-        if self.G["state"] == State.GAME_OVER:
-            self.running = False
-
-        match self.G["waitingFor"]:
-            case "start_run":
-                seed = self.seed
-                if seed is None:
-                    seed = self.random_seed()
-                return [
-                    Actions.START_RUN,
-                    self.stake,
-                    self.deck,
-                    seed,
-                    self.challenge,
-                ]
-            case "skip_or_select_blind":
-                return self.skip_or_select_blind(self, self.G)
-            case "select_cards_from_hand":
-                return self.select_cards_from_hand(self, self.G)
-            case "select_shop_action":
-                return self.select_shop_action(self, self.G)
-            case "select_booster_action":
-                return self.select_booster_action(self, self.G)
-            case "sell_jokers":
-                return self.sell_jokers(self, self.G)
-            case "rearrange_jokers":
-                return self.rearrange_jokers(self, self.G)
-            case "use_or_sell_consumables":
-                return self.use_or_sell_consumables(self, self.G)
-            case "rearrange_consumables":
-                return self.rearrange_consumables(self, self.G)
-            case "rearrange_hand":
-                return self.rearrange_hand(self, self.G)
-
-    def run_step(self):
+    def init_sock(self):
         if self.sock is None:
-            self.verifyimplemented()
             self.state = {}
             self.G = None
 
             self.running = True
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.settimeout(1)
-            self.sock.connect(self.addr)
-
-        if self.running:
-            self.sendcmd("HELLO")
-
-            jsondata = {}
-            try:
-                data = self.sock.recv(65536)
-                jsondata = json.loads(data)
-
-                if "response" in jsondata:
-                    print(jsondata["response"])
-                else:
-                    self.G = jsondata
-                    if self.G["waitingForAction"]:
-                        cache_state(self.G["waitingFor"], self.G)
-                        action = self.chooseaction()
-                        if action == None:
-                            raise ValueError("All actions must return a value!")
-
-                        cmdstr = self.actionToCmd(action)
-                        self.sendcmd(cmdstr)
-            except socket.error as e:
-                print(e)
-                print("Socket error, reconnecting...")
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.sock.settimeout(1)
-                self.sock.connect(self.addr)
+            # self.sock.connect(self.addr)
 
     def run(self):
-        while self.running:
-            self.run_step()
+        self.init_sock()
+        time.sleep(1)
+
+        try:
+            # 接收游戏状态更新
+            # data = self.sock.recv(65536)
+            # jsondata = json.loads(data)
+            
+            # if "state" in jsondata:
+            #     # 状态已更新，可以发送新指令
+            #     self.G = jsondata
+                
+            #     # 检查状态是否改变
+            #     if self.last_state != self.G["state"]:
+            #         self.last_state = self.G["state"]
+            # cmdstr = self.actionToCmd([Actions.START_RUN, 1, "Plasma Deck", self.random_seed(), None])
+            # cmdstr = self.actionToCmd([Actions.SKIP_BLIND])
+            # cmdstr = self.actionToCmd([Actions.SELECT_BLIND])
+            # cmdstr = self.actionToCmd([Actions.PLAY_HAND, [1,2,3]])
+            # cmdstr = self.actionToCmd([Actions.DISCARD_HAND, [1,2,3]])
+            # cmdstr = self.actionToCmd([Actions.BUY_CARD, [1,2]])
+            #? cmdstr = self.actionToCmd([Actions.BUY_VOUCHER, [1]])
+            # cmdstr = self.actionToCmd([Actions.BUY_BOOSTER, 1])
+            # cmdstr = self.actionToCmd([Actions.SELECT_BOOSTER_CARD, [2], [2,3,4]]) # 使用第二张牌给2，3，4张手牌
+            # cmdstr = self.actionToCmd([Actions.SKIP_BOOSTER_PACK])
+            # cmdstr = self.actionToCmd([Actions.REROLL_SHOP])
+            # cmdstr = self.actionToCmd([Actions.END_SHOP])
+            # cmdstr = self.actionToCmd([Actions.USE_CONSUMABLE, [1], [2,3,5]])
+            # cmdstr = self.actionToCmd([Actions.SELL_CONSUMABLE, [1]])
+            # cmdstr = self.actionToCmd([Actions.SELL_JOKER, [1]])
+            cmdstr = self.actionToCmd([Actions.REARRANGE_JOKERS, [2, 1]])
+            print(cmdstr)
+            self.sendcmd(cmdstr)
+        except socket.error as e:
+            print(f"Socket error: {e}")
+            # 重新连接
+            self.init_sock()
+        except Exception as e:
+            print(f"Error: {e}")
+            self.running = False
+        
+        # while self.running:
+        #     try:
+        #         # 接收游戏状态更新
+        #         data = self.sock.recv(65536)
+        #         jsondata = json.loads(data)
+                
+        #         if "state" in jsondata:
+        #             # 状态已更新，可以发送新指令
+        #             self.G = jsondata
+                    
+        #             # 检查状态是否改变
+        #             if self.last_state != self.G["state"]:
+        #                 self.last_state = self.G["state"]
+                        
+
+                            
+        #     except socket.timeout:
+        #         # 超时继续等待
+        #         continue
+        #     except socket.error as e:
+        #         print(f"Socket error: {e}")
+        #         # 重新连接
+        #         self.init_sock()
+        #     except Exception as e:
+        #         print(f"Error: {e}")
+        #         self.running = False
+        

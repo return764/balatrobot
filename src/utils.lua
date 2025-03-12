@@ -1,4 +1,3 @@
-
 Utils = { }
 
 function Utils.getCardData(card)
@@ -48,7 +47,7 @@ end
 function Utils.getConsumablesData()
     local _consumables = { }
 
-    if G and G.consumables and G.consumables.cards then
+    if G and G.consumeables and G.consumeables.cards then
         for i = 1, #G.consumeables.cards do
             local _card = Utils.getCardData(G.consumeables.cards[i])
             _consumables[i] = _card
@@ -63,6 +62,7 @@ function Utils.getBlindData()
 
     if G and G.GAME then
         _blinds.ondeck = G.GAME.blind_on_deck
+        _blinds.chips = G.GAME.blind.chips
     end
 
     return _blinds
@@ -132,16 +132,16 @@ function Utils.getGameData()
 
     if G and G.STATE then
         _game.state = G.STATE
-        _game.num_hands_played = G.GAME.hands_played
-        _game.num_skips = G.GAME.Skips
-        _game.round = G.GAME.round
-        _game.discount_percent = G.GAME.discount_percent
-        _game.interest_cap = G.GAME.interest_cap
-        _game.inflation = G.GAME.inflation
+        _game.num_hands_played = G.GAME.hands_played -- 打出的手牌数
+        _game.num_skips = G.GAME.skips -- 本轮跳过盲注的次数
+        _game.round = G.GAME.round -- 游戏回合数
+        _game.discount_percent = G.GAME.discount_percent -- 折扣比率
+        _game.interest_cap = G.GAME.interest_cap -- 利息
+        _game.inflation = G.GAME.inflation -- 通货膨胀， 购买后永久上涨
         _game.dollars = G.GAME.dollars
         _game.max_jokers = G.GAME.max_jokers
-        _game.bankrupt_at = G.GAME.bankrupt_at
-        _game.chips = _game.chips
+        _game.bankrupt_at = G.GAME.bankrupt_at -- 最小金额，信用卡会改变这个值
+        _game.chips = G.GAME.chips -- 当前得分
     end
 
     return _game
@@ -167,14 +167,56 @@ function Utils.getGamestate()
     return _gamestate
 end
 
+function printTable(tbl, level, indent)
+    level = level or 0
+    indent = indent or 0
+
+    -- 生成缩进字符串
+    local indentStr = string.rep("  ", indent)
+
+    -- 遍历表格
+    for key, value in pairs(tbl) do
+        -- 打印键
+        io.write(indentStr .. tostring(key) .. ": ")
+
+        -- 根据值的类型进行处理
+        if type(value) == "table" then
+            -- 如果值是表格，递归打印
+            io.write("\n")
+            printTable(value, level + 1, indent + 1)
+        else
+            -- 如果值不是表格，直接打印
+            io.write(tostring(value) .. "\n")
+        end
+    end
+end
+
+function splitString(input, delimiter)
+    local result = {}
+    local start = 1
+    local pos = 1
+
+    while true do
+        pos = string.find(input, delimiter, start, true)  -- 使用 true 来进行字面匹配
+        if pos then
+            table.insert(result, string.sub(input, start, pos - 1))
+            start = pos + 1
+        else
+            table.insert(result, string.sub(input, start))
+            break
+        end
+    end
+
+    return result
+end
+
 function Utils.parseaction(data)
     -- Protocol is ACTION|arg1|arg2
-    action = data:match("^([%a%u_]*)")
-    params = data:match("|(.*)")
+    local action = data:match("^([%a%u_]*)")
+    local params = data:match("|(.*)")
 
     if action then
         local _action = Bot.ACTIONS[action]
-
         if not _action then
             return nil
         end
@@ -183,19 +225,36 @@ function Utils.parseaction(data)
         _actiontable[1] = _action
 
         if params then
-            local _i = 2
-            for _arg in params:gmatch("[%w%s,]+") do
-                local _splitstring = { }
-                local _j = 1
-                for _str in _arg:gmatch('([^,]+)') do
-                    _splitstring[_j] = tonumber(_str) or _str
-                    _j = _j + 1
+            -- 首先按 | 分割参数
+            local _args = splitString(params, "|")
+            for i, arg in ipairs(_args) do
+                if arg ~= '' then
+                    if arg:match("^(%b[])") then
+                        arg = arg:sub(2, -2)
+                        local _splitparams = splitString(arg, ",")
+                        local _paramtable = {}
+                        for j, param in ipairs(_splitparams) do
+                            if param ~= '' then
+                                if param == 'None' then
+                                    _paramtable[j] = false
+                                else
+                                    _paramtable[j] = tonumber(param) or param
+                                end
+                            end
+                        end
+                        _actiontable[i + 1] = _paramtable
+                    else
+                        -- 单个参数直接转换
+                        if arg == 'None' then
+                            _actiontable[i + 1] = false
+                        else
+                            _actiontable[i + 1] = tonumber(arg) or arg
+                        end
+                    end
                 end
-                _actiontable[_i] = _splitstring
-                _i = _i + 1
             end
         end
-
+        printTable(_actiontable)
         return _actiontable
     end
 end
@@ -208,17 +267,22 @@ Utils.ERROR = {
 }
 
 function Utils.validateAction(action)
-    if action and #action > 1 and #action > Bot.ACTIONPARAMS[action[1]].num_args then
-        return Utils.ERROR.NUMPARAMS
-    elseif not action then
-        return Utils.ERROR.MSGFORMAT
-    else
-        if not Bot.ACTIONPARAMS[action[1]].isvalid(action) then
-            return Utils.ERROR.INVALIDACTION
-        end
+    if not action[1] or not BalatrobotAPI.ACTIONPARAMS[action[1]] then
+        return Utils.ERROR.INVALIDACTION
     end
 
-    return Utils.ERROR.NOERROR
+    local actionCell = BalatrobotAPI.ACTIONPARAMS[action[1]]
+    
+    local params = {unpack(action, 2)}
+    if #params ~= actionCell.num_args then
+        return Utils.ERROR.NUMPARAMS
+    end
+    
+    if not actionCell.isvalid(params) then
+        return Utils.ERROR.INVALIDACTION
+    end
+    
+    return nil
 end
 
 function Utils.isTableUnique(table)

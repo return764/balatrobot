@@ -270,7 +270,7 @@ Bot.SETTINGS = {
     deck = "Plasma Deck",
 
     -- Keep these nil for random seed
-    seed = "1OGB5WO",
+    seed = nil,
     challenge = '',
 
     -- Time between actions the bot takes (pushing buttons, clicking cards, etc.)

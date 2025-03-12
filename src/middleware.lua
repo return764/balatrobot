@@ -1,4 +1,3 @@
-
 Middleware = { }
 Middleware.choosingboostercards = false
 
@@ -9,7 +8,7 @@ Middleware.conditionalactions = { }
 Middleware.BUTTONS = {
 
     -- Shop Phase Buttons
-    NEXT_ROUND = nil,
+    END_SHOP = nil,
     REROLL = nil,
 
     -- Pack Phase Buttons
@@ -101,24 +100,31 @@ local function clickcard(card, delay)
     end, delay)
 end
 
-local function usecard(card, delay)
+local function usecard(card, sell, delay)
 
     queueaction(function()
         local _use_button = nil
         local _use_button = card.children.use_button and card.children.use_button.definition
         if _use_button and _use_button.config.button == nil then
-            local _node_index = card.ability.consumeable and 2 or 1
-            _use_button = _use_button.nodes[_node_index]
-
-            if card.area and card.area.config.type == 'joker' then
-                local _use_button = card.children.use_button.definition.nodes[1].nodes[1].nodes[1].nodes[1]
-                pushbutton_instant(_use_button, delay)
-            else
-                pushbutton_instant(_use_button, delay)
+            if card.ability.set == 'Joker' then
+                -- 出售小丑牌
+                local _sell_button = _use_button.nodes[1].nodes[1].nodes[1].nodes[1]
+                pushbutton_instant(_sell_button, delay)
+            elseif card.ability.consumeable then
+                if sell then
+                    -- 出售消耗卡
+                    local _sell_button = _use_button.nodes[1].nodes[1].nodes[1].nodes[1]
+                    pushbutton_instant(_sell_button, delay)
+                else
+                    -- 使用消耗卡
+                    local _use_button = _use_button.nodes[1].nodes[2].nodes[1].nodes[1]
+                    pushbutton_instant(_use_button, delay)
+                end
             end
-
             return
         end
+
+        
         local _buy_and_use_button = card.children.buy_and_use_button and card.children.buy_and_use_button.definition
         local _buy_button = card.children.buy_button and card.children.buy_button.definition
 
@@ -155,125 +161,76 @@ local function c_update()
     end
 end
 
-function Middleware.c_play_hand()
+function Middleware.c_play_hand(cards)
+    for i = 1, #cards do
+        clickcard(G.hand.cards[cards[i]])
+    end
 
-    firewhenready(function()
-        local _action, _cards_to_play = Bot.select_cards_from_hand()
-        if _action and _cards_to_play then
-            return true, _action, _cards_to_play
-        else
-            return false
-        end
-    end, 
-    
-    function(_action, _cards_to_play)
-        for i = 1, #_cards_to_play do
-            clickcard(G.hand.cards[_cards_to_play[i]])
-        end
-    
-        -- Option 1: Play Hand
-        if _action == Bot.ACTIONS.PLAY_HAND then
-            local _play_button = UIBox:get_UIE_by_ID('play_button', G.buttons.UIRoot)
-            pushbutton(_play_button)
-        end
-    
-        -- Option 2: Discard Hand
-        if _action == Bot.ACTIONS.DISCARD_HAND then
-            local _discard_button = UIBox:get_UIE_by_ID('discard_button', G.buttons.UIRoot)
-            pushbutton(_discard_button)
-        end
-    end)
+    pushbutton(UIBox:get_UIE_by_ID('play_button', G.buttons.UIRoot))
+end
+
+function Middleware.c_discard_hand(cards)
+    for i = 1, #cards do
+        clickcard(G.hand.cards[cards[i]])
+    end
+
+    pushbutton(UIBox:get_UIE_by_ID('discard_button', G.buttons.UIRoot))
 end
 
 function Middleware.c_select_blind()
-
-    local _blind_on_deck = G.GAME.blind_on_deck
-
-    firewhenready(function()
-        if G.GAME.blind_on_deck == 'Small' or G.GAME.blind_on_deck == 'Big' or G.GAME.blind_on_deck == 'Boss' then
-            local _action = Bot.skip_or_select_blind(_blind_on_deck)
-            if _action then
-                return true, _action
-            else
-                return false
-            end
-        end
-        return false
-    end, 
-
-    function(_action)
-        local _blind_obj = G.blind_select_opts[string.lower(_blind_on_deck)]
-
-        local _button = nil
-        if _action == Bot.ACTIONS.SELECT_BLIND then
-            local _select_button = _blind_obj:get_UIE_by_ID('select_blind_button')
-            _button = _select_button
-        elseif _action == Bot.ACTIONS.SKIP_BLIND then
-            local _skip_button = _blind_obj:get_UIE_by_ID('tag_'.._blind_on_deck).children[2]
-            _button = _skip_button
-        end
-    
-        pushbutton(_button)
-    end)
+    local _select_button = G.blind_select_opts[string.lower(G.GAME.blind_on_deck)]:get_UIE_by_ID('select_blind_button')
+    pushbutton(_select_button)
 end
 
+function Middleware.c_skip_blind()
+    local _skip_button = G.blind_select_opts[string.lower(G.GAME.blind_on_deck)]:get_UIE_by_ID('tag_'..G.GAME.blind_on_deck).children[2]
+    pushbutton(_skip_button)
+end
 
-function Middleware.c_choose_booster_cards()
+function Middleware.c_choose_booster_cards(booster_card_indexes, hand_card_indexes)
+    for i = 1, #hand_card_indexes do
+        clickcard(G.hand.cards[hand_card_indexes[i]])
+    end
 
-    if Middleware.choosingboostercards == true then return end
-    if not G.pack_cards.cards then return end
+    for i = 1, #booster_card_indexes do
+        clickcard(G.pack_cards.cards[booster_card_indexes[1]])
+        usecard(G.pack_cards.cards[booster_card_indexes[1]])
+    end
+end
 
-    Middleware.choosingboostercards = true
+function Middleware.c_skip_booster()
+    pushbutton(Middleware.BUTTONS.SKIP_PACK)
+end
 
-    firewhenready(function()
-        local _action, _card, _hand_cards = Bot.select_booster_action(G.pack_cards.cards, G.hand.cards)
-        if _action then
-            return true, _action, _card, _hand_cards
-        else
-            return false
-        end
-    end,
+function Middleware.c_buy_card(cards)
+    if not cards then return end
 
-    function(_action, _card, _hand_cards)
-        if _action == Bot.ACTIONS.SKIP_BOOSTER_PACK then
-            pushbutton(Middleware.BUTTONS.SKIP_PACK)
-        elseif _action == Bot.ACTIONS.SELECT_BOOSTER_CARD then
-    
-            -- Click each card from your deck first (only occurs if _pack_card is consumable)
-            for i = 1, #_hand_cards do
-                clickcard(G.hand.cards[_hand_cards[i]])
-            end
-    
-            -- Then select the booster card to activate
-            clickcard(G.pack_cards.cards[_card[1]])
-            usecard(G.pack_cards.cards[_card[1]])
-        end
-    
-        if G.GAME.pack_choices - 1 > 0 then
-            queueaction(function()
-                firewhenready(function()
-                    return Middleware.BUTTONS.SKIP_PACK ~= nil and
-                    Middleware.BUTTONS.SKIP_PACK.config.button == 'skip_booster' and
-                    Middleware.choosingboostercards == false and
-                    G and G.pack_cards and G.pack_cards.cards
-                end, function()
-                    Middleware.c_choose_booster_cards()
-                end)
-            end, 0.0)
-        else
-            if G.GAME.PACK_INTERRUPT == G.STATES.BLIND_SELECT then
-                queueaction(function()
-                    firewhenready(function()
-                        return G.STATE_COMPLETE and G.STATE == G.STATES.BLIND_SELECT
-                    end, function()
-                        Middleware.choosingboostercards = false
-                        Middleware.c_select_blind()
-                    end)
-                end, 0.0)
-            end
-        end
-    end)
+    for i = 1, #cards do
+        clickcard(G.shop_jokers.cards[cards[i]])
+        usecard(G.shop_jokers.cards[cards[i]])
+    end
+end
 
+function Middleware.c_buy_vouchers(cards)
+    if not cards then return end
+
+    for i = 1, #cards do
+        clickcard(G.shop_vouchers.cards[cards[i]])
+        usecard(G.shop_vouchers.cards[cards[i]])
+    end
+end
+
+function Middleware.c_buy_booster(index)
+    clickcard(G.shop_booster.cards[index])
+    usecard(G.shop_booster.cards[index])
+end
+
+function Middleware.c_reroll_shop()
+    pushbutton(Middleware.BUTTONS.REROLL)
+end
+
+function Middleware.c_end_shop()
+    pushbutton(G.shop:get_UIE_by_ID('next_round_button'))
 end
 
 function Middleware.c_shop()
@@ -401,122 +358,64 @@ function Middleware.c_rearrange_consumables()
 
 end
 
-function Middleware.c_use_or_sell_consumables()
+function Middleware.c_use_consumable_card(consumable_card_indexes, hand_card_indexes)
+    for i = 1, #hand_card_indexes do
+        clickcard(G.hand.cards[hand_card_indexes[i]])
+    end
 
-    firewhenready(function()
-        local _action, _cards = Bot.use_or_sell_consumables()
-        if _action then
-            return true, _action, _cards
-        else
-            return false
+    for i = 1, #consumable_card_indexes do
+        clickcard(G.consumeables.cards[consumable_card_indexes[1]])
+        usecard(G.consumeables.cards[consumable_card_indexes[1]])
+    end
+end
+
+function Middleware.c_sell_consumable_card(card_indexes)
+    for i = 1, #card_indexes do
+        clickcard(G.consumeables.cards[card_indexes[1]])
+        usecard(G.consumeables.cards[card_indexes[1]], true)
+    end
+end
+
+
+function Middleware.c_rearrange_jokers(order)
+    queueaction(function()
+        for k, v in ipairs(order) do
+            if k < v then
+                G.jokers.cards[k], G.jokers.cards[v] = G.jokers.cards[v], G.jokers.cards[k]
+            end
         end
-    end,
 
-    function(_action, _cards)
-        Middleware.c_rearrange_consumables()
-
-        if _cards then
-            -- TODO implement this
-
-        end
+        G.jokers:set_ranks()
     end)
 
 end
 
-
-function Middleware.c_rearrange_jokers()
-
-    firewhenready(function()
-        local _action, _order = Bot.rearrange_jokers()
-        if _action then
-            return true, _action, _order
-        else
-            return false
+function Middleware.c_sell_jokers(cards)
+    if cards then
+        for i = 1, #cards do
+            clickcard(G.jokers.cards[cards[i]])
+            usecard(G.jokers.cards[cards[i]])
         end
-    end,
-
-    function(_action, _order)
-        Middleware.c_use_or_sell_consumables()
-
-        if not _order or #_order ~= #G.jokers.cards then return end
-
-        queueaction(function()
-            for k,v in ipairs(_order) do
-                if k < v then
-                    G.jokers.cards[k], G.jokers.cards[v] = G.jokers.cards[v], G.jokers.cards[k]
-                end
-            end
-
-            G.jokers:set_ranks()
-        end)
-    end)
-
+    end
 end
 
-function Middleware.c_sell_jokers()
-    
-    firewhenready(function()
-        local _action, _cards = Bot.sell_jokers()
-        if _action then
-            return true, _action, _cards
-        else
-            return false
-        end
-    end,
+function Middleware.c_start_run(stake, deck, seed, challenge)
+    challenge = challenge or nil
+    queueaction(function()
+        -- for k, v in pairs(G.P_CENTER_POOLS.Back) do
+        --     if v.name == deck then
+        --         G.GAME.selected_back:change_to(v)
+        --         G.GAME.viewed_back:change_to(v)
+        --     end
+        -- end
 
-    function(_action, _cards)
-        Middleware.c_rearrange_jokers()
-
-        if _action == Bot.ACTIONS.SELL_JOKER and _cards then
-            for i = 1, #_cards do
-                clickcard(G.jokers.cards[_cards[i]])
-                usecard(G.jokers.cards[_cards[i]])
-            end
-        end
-    end)
-
-end
-
-function Middleware.c_start_run()
-
-    firewhenready(function()
-        local _action, _stake, _deck, _seed, _challenge = Bot.start_run()
-        _stake = _stake ~= nil and tonumber(_stake[1]) or 1
-        _deck = _deck ~= nil and _deck[1] or "Red Deck"
-        _seed = _seed ~= nil and _seed[1] or nil
-        _challenge = _challenge ~= nil and _challenge[1] or nil
-        if _action then
-            return true, _action, _stake, _deck, _seed, _challenge
-        else
-            return false
-        end
-    end,
-
-    function(_action, _stake, _deck, _seed, _challenge)
-        queueaction(function()
-            local _play_button = G.MAIN_MENU_UI:get_UIE_by_ID('main_menu_play')
-            G.FUNCS[_play_button.config.button]({
-                config = { }
-            })
-            G.FUNCS.exit_overlay_menu()
-        end)
-
-        queueaction(function()
-            for k, v in pairs(G.P_CENTER_POOLS.Back) do
-                if v.name == _deck then
-                    G.GAME.selected_back:change_to(v)
-                    G.GAME.viewed_back:change_to(v)
-                end
-            end
-
-            for i = 1, #G.CHALLENGES do
-                if G.CHALLENGES[i].name == _challenge then
-                    _challenge = G.CHALLENGES[i]
-                end                    
-            end
-            G.FUNCS.start_run(nil, {stake = _stake, seed = _seed, challenge = _challenge})
+        -- for i = 1, #G.CHALLENGES do
+        --     if G.CHALLENGES[i].name == challenge then
+        --         challenge = G.CHALLENGES[i]
+        --     end                    
+        -- end
+        G.FUNCS.start_run(nil, {stake = stake, seed = seed, challenge = challenge})
         end, 1.0)
-    end)
 end
 
 
@@ -537,43 +436,50 @@ end
 local function c_initgamehooks()
 
     -- Hooks break SAVE_MANAGER.channel:push so disable saving. Who needs it when you are botting anyway...
-    G.SAVE_MANAGER = {
-        channel = {
-            push = function() end
-        }
-    }
+    -- G.SAVE_MANAGER = {
+    --     channel = {
+    --         push = function() end
+    --     }
+    -- }
 
     -- Detect when hand has been drawn
-    G.GAME.blind.drawn_to_hand = Hook.addcallback(G.GAME.blind.drawn_to_hand, function(...)
-        firewhenready(function()
-            return G.buttons and G.STATE_COMPLETE and G.STATE == G.STATES.SELECTING_HAND
-        end, function()
-            Middleware.c_sell_jokers()
-        end)
-    end)
+    -- G.GAME.blind.drawn_to_hand = Hook.addcallback(G.GAME.blind.drawn_to_hand, function(...)
+    --     firewhenready(function()
+    --         return G.buttons and G.STATE_COMPLETE and G.STATE == G.STATES.SELECTING_HAND
+    --     end, function()
+    --         Middleware.c_sell_jokers()
+    --     end)
+    -- end)
 
     -- Hook button snaps
-    G.CONTROLLER.snap_to = Hook.addcallback(G.CONTROLLER.snap_to, function(...)
-        local _self = ...
+    -- G.CONTROLLER.snap_to = Hook.addcallback(G.CONTROLLER.snap_to, function(...)
+    --     local _self = ...
 
-        if _self and _self.snap_cursor_to.node and _self.snap_cursor_to.node.config and _self.snap_cursor_to.node.config.button then
+    --     if _self and _self.snap_cursor_to.node and _self.snap_cursor_to.node.config and _self.snap_cursor_to.node.config.button then
             
-            local _button = _self.snap_cursor_to.node
-            local _buttonfunc = _self.snap_cursor_to.node.config.button
+    --         local _button = _self.snap_cursor_to.node
+    --         local _buttonfunc = _self.snap_cursor_to.node.config.button
 
-            if _buttonfunc == 'select_blind' and G.STATE == G.STATES.BLIND_SELECT then
-                Middleware.c_select_blind()
-            elseif _buttonfunc == 'cash_out' then
-                pushbutton(_button)
-            elseif _buttonfunc == 'toggle_shop' and G.shop ~= nil then -- 'next_round_button'
-                Middleware.BUTTONS.NEXT_ROUND = _button
+    --         if _buttonfunc == 'select_blind' and G.STATE == G.STATES.BLIND_SELECT then
+    --             Middleware.c_select_blind()
+    --         elseif _buttonfunc == 'cash_out' then
+    --             pushbutton(_button)
+    --         elseif _buttonfunc == 'toggle_shop' and G.shop ~= nil then -- 'next_round_button'
+    --             Middleware.BUTTONS.NEXT_ROUND = _button
 
-                firewhenready(function()
-                    return G.shop ~= nil and G.STATE_COMPLETE and G.STATE == G.STATES.SHOP
-                end, Middleware.c_shop)
-            end
-        end
-    end)
+    --             firewhenready(function()
+    --                 return G.shop ~= nil and G.STATE_COMPLETE and G.STATE == G.STATES.SHOP
+    --             end, Middleware.c_shop)
+    --         end
+    --     end
+    -- end)
+
+    -- Toggle shop
+    -- G.FUNCS.toggle_shop = Hook.addcallback(G.FUNCS.toggle_shop, function(...)
+    --     local _e = ...
+    --     print(e.config.id)
+    --     Middleware.BUTTONS.END_SHOP = _e
+    -- end)
 
     -- Set reroll availability
     G.FUNCS.can_reroll = Hook.addcallback(G.FUNCS.can_reroll, function(...)
@@ -585,28 +491,22 @@ local function c_initgamehooks()
     G.FUNCS.can_skip_booster = Hook.addcallback(G.FUNCS.can_skip_booster, function(...)
         local _e = ...
         Middleware.BUTTONS.SKIP_PACK = _e
-        if Middleware.BUTTONS.SKIP_PACK ~= nil and
-        Middleware.BUTTONS.SKIP_PACK.config.button == 'skip_booster' and
-        Middleware.choosingboostercards == false and
-        G and G.pack_cards and G.pack_cards.cards then
-            Middleware.c_choose_booster_cards()
-        end
     end)
 end
 
 function Middleware.hookbalatro()
     -- Unlock all card backs
-    for k, v in pairs(G.P_CENTERS) do
-        if not v.demo and not v.wip and v.set == "Back" then 
-            v.alerted = true
-            v.discovered = true
-            v.unlocked = true
-        end
-    end
+    -- for k, v in pairs(G.P_CENTERS) do
+    --     if not v.demo and not v.wip and v.set == "Back" then 
+    --         v.alerted = true
+    --         v.discovered = true
+    --         v.unlocked = true
+    --     end
+    -- end
 
     -- Start game from main menu
     G.start_run = Hook.addcallback(G.start_run, c_initgamehooks)
-    G = Hook.addonwrite(G, w_gamestate)
+    -- G = Hook.addonwrite(G, w_gamestate)
     G.update = Hook.addcallback(G.update, c_update)
 end
 
