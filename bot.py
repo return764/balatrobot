@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 
+import json
 import socket
+import threading
 import time
 from enum import Enum
 import random
@@ -32,6 +34,7 @@ class State(Enum):
 
 
 class Actions(Enum):
+    GET_GAMESTATE = 0
     SELECT_BLIND = 1 #
     SKIP_BLIND = 2 #
     PLAY_HAND = 3 #
@@ -51,7 +54,7 @@ class Actions(Enum):
     REARRANGE_HAND = 17 # no required
     PASS = 18 # ?
     START_RUN = 19 # no required
-    SEND_GAMESTATE = 20
+    CASH_OUT = 20
 
 
 class Bot:
@@ -61,7 +64,7 @@ class Bot:
         stake: int = 1,
         seed: str = None,
         challenge: str = None,
-        bot_port: int = 12345,
+        bot_port: int = 12345
     ):
         self.G = None
         self.deck = deck
@@ -72,8 +75,8 @@ class Bot:
         self.bot_port = bot_port
 
         self.addr = ("localhost", self.bot_port)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.running = False
-        self.sock = None
 
         self.state = {}
         self.last_state = None
@@ -99,57 +102,45 @@ class Bot:
         # e.g. 1OGB5WO
         return "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=7))
 
-    def init_sock(self):
-        if self.sock is None:
-            self.state = {}
-            self.G = None
 
-            self.running = True
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.settimeout(1)
-            # self.sock.connect(self.addr)
+    def receive_thread(self):
+        while self.running:
+            try:
+                # 尝试接收数据
+                data = self.sock.recv(65536)
+                jsondata = json.loads(data)
+                print(f"Received message: {jsondata}")
+
+            except Exception as e:
+                print(f"Error in receive thread: {e}")
+                self.running = False
+
+    def send_thread(self):
+        while self.running:
+            # 模拟发送消息
+            self.send_action([Actions.GET_GAMESTATE])
+            #self.send_action([Actions.REARRANGE_JOKERS, [2, 1]])
+            time.sleep(2)  # 每秒发送一次
+            
+
+    def send_action(self, action):
+        cmdstr = self.actionToCmd(action)
+        print(f"Sending message: {cmdstr}")
+        self.sendcmd(cmdstr)
 
     def run(self):
-        self.init_sock()
-        time.sleep(1)
+        self.running = True
+        receive_thread = threading.Thread(target=self.receive_thread)
+        send_thread = threading.Thread(target=self.send_thread)
 
-        try:
-            # 接收游戏状态更新
-            # data = self.sock.recv(65536)
-            # jsondata = json.loads(data)
-            
-            # if "state" in jsondata:
-            #     # 状态已更新，可以发送新指令
-            #     self.G = jsondata
-                
-            #     # 检查状态是否改变
-            #     if self.last_state != self.G["state"]:
-            #         self.last_state = self.G["state"]
-            # cmdstr = self.actionToCmd([Actions.START_RUN, 1, "Plasma Deck", self.random_seed(), None])
-            # cmdstr = self.actionToCmd([Actions.SKIP_BLIND])
-            # cmdstr = self.actionToCmd([Actions.SELECT_BLIND])
-            # cmdstr = self.actionToCmd([Actions.PLAY_HAND, [1,2,3]])
-            # cmdstr = self.actionToCmd([Actions.DISCARD_HAND, [1,2,3]])
-            # cmdstr = self.actionToCmd([Actions.BUY_CARD, [1,2]])
-            #? cmdstr = self.actionToCmd([Actions.BUY_VOUCHER, [1]])
-            # cmdstr = self.actionToCmd([Actions.BUY_BOOSTER, 1])
-            # cmdstr = self.actionToCmd([Actions.SELECT_BOOSTER_CARD, [2], [2,3,4]]) # 使用第二张牌给2，3，4张手牌
-            # cmdstr = self.actionToCmd([Actions.SKIP_BOOSTER_PACK])
-            # cmdstr = self.actionToCmd([Actions.REROLL_SHOP])
-            # cmdstr = self.actionToCmd([Actions.END_SHOP])
-            # cmdstr = self.actionToCmd([Actions.USE_CONSUMABLE, [1], [2,3,5]])
-            # cmdstr = self.actionToCmd([Actions.SELL_CONSUMABLE, [1]])
-            # cmdstr = self.actionToCmd([Actions.SELL_JOKER, [1]])
-            cmdstr = self.actionToCmd([Actions.REARRANGE_JOKERS, [2, 1]])
-            print(cmdstr)
-            self.sendcmd(cmdstr)
-        except socket.error as e:
-            print(f"Socket error: {e}")
-            # 重新连接
-            self.init_sock()
-        except Exception as e:
-            print(f"Error: {e}")
-            self.running = False
+        receive_thread.start()
+        send_thread.start()
+
+        receive_thread.join()
+        send_thread.join()
+
+        self.sock.close()
+        self.running = False
         
         # while self.running:
         #     try:
@@ -164,8 +155,21 @@ class Bot:
         #             # 检查状态是否改变
         #             if self.last_state != self.G["state"]:
         #                 self.last_state = self.G["state"]
-                        
-
+        # cmdstr = self.actionToCmd([Actions.START_RUN, 1, "Plasma Deck", self.random_seed(), None])
+        # cmdstr = self.actionToCmd([Actions.SKIP_BLIND])
+        # cmdstr = self.actionToCmd([Actions.SELECT_BLIND])
+        # cmdstr = self.actionToCmd([Actions.PLAY_HAND, [1,2,3]])
+        # cmdstr = self.actionToCmd([Actions.DISCARD_HAND, [1,2,3]])
+        # cmdstr = self.actionToCmd([Actions.BUY_CARD, [1,2]])
+        #? cmdstr = self.actionToCmd([Actions.BUY_VOUCHER, [1]])
+        # cmdstr = self.actionToCmd([Actions.BUY_BOOSTER, 1])
+        # cmdstr = self.actionToCmd([Actions.SELECT_BOOSTER_CARD, [2], [2,3,4]]) # 使用第二张牌给2，3，4张手牌
+        # cmdstr = self.actionToCmd([Actions.SKIP_BOOSTER_PACK])
+        # cmdstr = self.actionToCmd([Actions.REROLL_SHOP])
+        # cmdstr = self.actionToCmd([Actions.END_SHOP])
+        # cmdstr = self.actionToCmd([Actions.USE_CONSUMABLE, [1], [2,3,5]])
+        # cmdstr = self.actionToCmd([Actions.SELL_CONSUMABLE, [1]])
+        # cmdstr = self.actionToCmd([Actions.SELL_JOKER, [1]])
                             
         #     except socket.timeout:
         #         # 超时继续等待

@@ -15,6 +15,13 @@ end
 function Utils.getDeckData()
     local _deck = { }
 
+    if G and G.deck and G.deck.cards then
+        for i = 1, #G.deck.cards do
+            local _card = Utils.getCardData(G.deck.cards[i])
+            _deck[i] = _card
+        end
+    end
+
     return _deck
 end
 
@@ -62,7 +69,7 @@ function Utils.getBlindData()
 
     if G and G.GAME then
         _blinds.ondeck = G.GAME.blind_on_deck
-        _blinds.chips = G.GAME.blind.chips
+        _blinds.chips = G.GAME.blind and G.GAME.blind.chips
     end
 
     return _blinds
@@ -122,6 +129,7 @@ function Utils.getRoundData()
 
     if G and G.GAME and G.GAME.current_round then
         _current_round.discards_left = G.GAME.current_round.discards_left
+        _current_round.hands_left = G.GAME.current_round.hands_left
     end
 
     return _current_round
@@ -216,7 +224,7 @@ function Utils.parseaction(data)
     local params = data:match("|(.*)")
 
     if action then
-        local _action = Bot.ACTIONS[action]
+        local _action = BalatrobotAPI.ACTIONS[action]
         if not _action then
             return nil
         end

@@ -22,7 +22,6 @@ function SMODS.INIT.BALATROBOT()
 
 	-- Mod specific files
 	assert(load(NFS.read(mw.path .. "src/utils.lua")))()
-	assert(load(NFS.read(mw.path .. "src/bot.lua")))()
 	assert(load(NFS.read(mw.path .. "src/middleware.lua")))()
 	assert(load(NFS.read(mw.path .. "src/api.lua")))()
 

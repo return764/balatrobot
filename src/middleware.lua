@@ -1,12 +1,11 @@
 Middleware = { }
-Middleware.choosingboostercards = false
 
 Middleware.queuedactions = List.new()
 Middleware.currentaction = nil
-Middleware.conditionalactions = { }
 
 Middleware.BUTTONS = {
 
+    CASH_OUT = nil,
     -- Shop Phase Buttons
     END_SHOP = nil,
     REROLL = nil,
@@ -14,6 +13,22 @@ Middleware.BUTTONS = {
     -- Pack Phase Buttons
     SKIP_PACK = nil,
 
+}
+
+Middleware.SETTINGS = {
+    stake = 1,
+    deck = "Plasma Deck",
+
+    -- Keep these nil for random seed
+    seed = nil,
+    challenge = '',
+
+    -- Time between actions the bot takes (pushing buttons, clicking cards, etc.)
+    -- Minimum is 1 frame per action
+    action_delay = 0,
+
+    -- Receive commands from the API?
+    api = true,
 }
 
 function random_key(tb)
@@ -52,27 +67,10 @@ function Middleware.add_event_sequence(events)
     return _lastevent
 end
 
-local function firewhenready(condition, func)
-    for i = 1, #Middleware.conditionalactions do
-        if Middleware.conditionalactions[i] == nil then
-            Middleware.conditionalactions[i] = {
-                ready = condition,
-                fire = func
-            }
-            return nil
-        end
-    end
-
-    Middleware.conditionalactions[#Middleware.conditionalactions + 1] = {
-        ready = condition,
-        fire = func
-    }
-end
-
 local function queueaction(func, delay)
 
     if not delay then
-        delay = Bot.SETTINGS.action_delay
+        delay = Middleware.SETTINGS.action_delay
     end
 
     List.pushleft(Middleware.queuedactions, { func = func, delay = delay })
@@ -80,6 +78,7 @@ end
 
 local function pushbutton(button, delay)
     queueaction(function()
+        print('button: '..tostring(button))
         if button and button.config and button.config.button then
             G.FUNCS[button.config.button](button)
         end
@@ -148,18 +147,9 @@ local function c_update()
         Middleware.currentaction = Middleware.add_event_sequence({{ func = _func_and_delay.func, delay = _func_and_delay.delay }})
     end
 
-    -- Run functions that have been waiting for a condition to be met
-    for i = 1, #Middleware.conditionalactions do
-        if Middleware.conditionalactions[i] then
-            local _result = {Middleware.conditionalactions[i].ready()}
-            local _ready = table.remove(_result, 1)
-            if _ready == true then
-                Middleware.conditionalactions[i].fire(unpack(_result))
-                Middleware.conditionalactions[i] = nil
-            end
-        end
-    end
 end
+
+
 
 function Middleware.c_play_hand(cards)
     for i = 1, #cards do
@@ -233,131 +223,6 @@ function Middleware.c_end_shop()
     pushbutton(G.shop:get_UIE_by_ID('next_round_button'))
 end
 
-function Middleware.c_shop()
-
-    local _done_shopping = false
-
-    local _b_round_end_shop = true
-    local _b_reroll_shop = Middleware.BUTTONS.REROLL and Middleware.BUTTONS.REROLL.config and Middleware.BUTTONS.REROLL.config.button
-
-    local _cards_to_buy = { }
-    for i = 1, #G.shop_jokers.cards do
-        _cards_to_buy[i] = G.shop_jokers.cards[i].cost <= G.GAME.dollars and G.shop_jokers.cards[i] or nil
-    end
-
-    local _vouchers_to_buy = { }
-    for i = 1, #G.shop_vouchers.cards do
-        _vouchers_to_buy[i] = G.shop_vouchers.cards[i].cost <= G.GAME.dollars and G.shop_vouchers.cards[i] or nil
-    end
-
-    local _boosters_to_buy = { }
-    for i = 1, #G.shop_booster.cards do
-        _boosters_to_buy[i] = G.shop_booster.cards[i].cost <= G.GAME.dollars and G.shop_booster.cards[i] or nil
-    end
-
-    local _choices = { }
-    _choices[Bot.ACTIONS.END_SHOP] = _b_round_end_shop
-    _choices[Bot.ACTIONS.REROLL_SHOP] = _b_reroll_shop
-    _choices[Bot.ACTIONS.BUY_CARD] = #_cards_to_buy > 0 and _cards_to_buy or nil
-    _choices[Bot.ACTIONS.BUY_VOUCHER] = #_vouchers_to_buy > 0 and _vouchers_to_buy or nil
-    _choices[Bot.ACTIONS.BUY_BOOSTER] = #_boosters_to_buy > 0 and _boosters_to_buy or nil
-    
-    firewhenready(function()
-        local _action, _card = Bot.select_shop_action(_choices)
-        if _action then
-            return true, _action, _card
-        else
-            return false
-        end
-    end,
-
-    function(_action, _card)
-        if _action == Bot.ACTIONS.END_SHOP then
-            pushbutton(Middleware.BUTTONS.NEXT_ROUND)
-            _done_shopping = true
-        elseif _action == Bot.ACTIONS.REROLL_SHOP then
-            pushbutton(Middleware.BUTTONS.REROLL)
-        elseif _action == Bot.ACTIONS.BUY_CARD then
-            clickcard(_choices[Bot.ACTIONS.BUY_CARD][_card[1]])
-            usecard(_choices[Bot.ACTIONS.BUY_CARD][_card[1]])
-        elseif _action == Bot.ACTIONS.BUY_VOUCHER then
-            clickcard(_choices[Bot.ACTIONS.BUY_VOUCHER][_card[1]])
-            usecard(_choices[Bot.ACTIONS.BUY_VOUCHER][_card[1]])
-        elseif _action == Bot.ACTIONS.BUY_BOOSTER then
-            _done_shopping = true
-            clickcard(_choices[Bot.ACTIONS.BUY_BOOSTER][_card[1]])
-            usecard(_choices[Bot.ACTIONS.BUY_BOOSTER][_card[1]])
-        end
-    
-        if not _done_shopping then
-            queueaction(function()
-                firewhenready(function()
-                    return G.shop ~= nil and G.STATE_COMPLETE and G.STATE == G.STATES.SHOP
-                end, Middleware.c_shop)
-            end)
-        end
-    end)
-    
-end
-
-function Middleware.c_rearrange_hand()
-
-    firewhenready(function()
-        local _action, _order = Bot.rearrange_hand()
-        if _action then
-            return true, _action, _order
-        else
-            return false
-        end
-    end,
-
-    function(_action, _order)
-        Middleware.c_play_hand()
-
-        if not _order or #_order ~= #G.hand.cards then return end
-
-        queueaction(function()
-            for k,v in ipairs(_order) do
-                if k < v then
-                    G.hand.cards[k], G.hand.cards[v] = G.hand.cards[v], G.hand.cards[k]
-                end
-            end
-
-            G.hand:set_ranks()
-        end)
-    end)
-
-end
-
-function Middleware.c_rearrange_consumables()
-
-    firewhenready(function()
-        local _action, _order = Bot.rearrange_consumables()
-        if _action then
-            return true, _action, _order
-        else
-            return false
-        end
-    end,
-
-    function(_action, _order)
-        Middleware.c_rearrange_hand()
-
-        if not _order or #_order ~= #G.consumables.cards  then return end
-
-        queueaction(function()
-            for k,v in ipairs(_order) do
-                if k < v then
-                    G.consumeables.cards[k], G.consumeables.cards[v] = G.consumeables.cards[v], G.consumeables.cards[k]
-                end
-            end
-
-            G.consumeables:set_ranks()
-        end)
-    end)
-
-end
-
 function Middleware.c_use_consumable_card(consumable_card_indexes, hand_card_indexes)
     for i = 1, #hand_card_indexes do
         clickcard(G.hand.cards[hand_card_indexes[i]])
@@ -399,6 +264,61 @@ function Middleware.c_sell_jokers(cards)
     end
 end
 
+function print_UIBox_structure(ui_box, depth, max_depth)
+    -- 初始化参数
+    depth = depth or 0
+    max_depth = max_depth or 10  -- 防止无限递归
+    
+    if depth > max_depth then return end
+    
+    -- 创建缩进
+    local indent = string.rep("  ", depth)
+    
+    -- 如果ui_box为空则返回
+    if not ui_box then 
+        print(indent.."nil UIBox")
+        return 
+    end
+    
+    -- 打印基本信息
+    print(indent.."UIBox {")
+    
+    -- 打印Transform信息
+    if ui_box.T then
+        print(indent.."  Transform: {")
+        print(indent.."    x: "..tostring(ui_box.T.x))
+        print(indent.."    y: "..tostring(ui_box.T.y))
+        print(indent.."    w: "..tostring(ui_box.T.w))
+        print(indent.."    h: "..tostring(ui_box.T.h))
+        print(indent.."  }")
+    end
+    
+    -- 打印配置信息
+    if ui_box.config then
+        print(indent.."  Config: {")
+        print(indent.."    id: "..tostring(ui_box.config.id))
+        print(indent.."    button: "..tostring(ui_box.config.button))
+        -- 其他配置信息...
+        print(indent.."  }")
+    end
+    
+    -- 递归打印children
+    if ui_box.children then
+        print(indent.."  Children: {")
+        for k, child in pairs(ui_box.children) do
+            print(indent.."    ["..tostring(k).."] =>")
+            print_UIBox_structure(child, depth + 2, max_depth)
+        end
+        print(indent.."  }")
+    end
+    
+    print(indent.."}")
+end
+
+function Middleware.c_cash_out()
+    pushbutton(Middleware.BUTTONS.CASH_OUT)
+end
+
 function Middleware.c_start_run(stake, deck, seed, challenge)
     challenge = challenge or nil
     queueaction(function()
@@ -424,13 +344,82 @@ local function w_gamestate(...)
 
     -- If we lose a run, we want to go back to the main menu
     -- Before we try to start a new run
-    if _k == 'STATE' and _v == G.STATES.GAME_OVER then
-        G.FUNCS.go_to_menu({})
-    end
+    -- if _k == 'STATE' and _v == G.STATES.GAME_OVER then
+    --     G.FUNCS.go_to_menu({})
+    -- end
 
-    if _k == 'STATE' and _v == G.STATES.MENU then
-        Middleware.c_start_run()
+    -- if _k ~= 'PREV_GARB' 
+    -- and _k ~= 'FPS_CAP' 
+    -- and _k ~= 'SPEEDFACTOR' 
+    -- and _k ~= 'JIGGLE_VIBRATION' 
+    -- and _k ~= 'CURR_VIBRATION' 
+    -- and _k ~= 'DRAW_HASH' 
+    -- and _k ~= 'real_dt' 
+    -- and _k ~= 'shared_shadow' 
+    -- and _k ~= 'under_overlay' 
+    -- and _k ~= 'MAJORS' 
+    -- and _k ~= 'MINORS' 
+    -- and _k ~= 'VIBRATION' 
+    -- and _k ~= 'ALERT_ON_SCREEN' 
+    -- and _k ~= 'screenwipe_amt' 
+    -- and _k ~= 'ACC_state' 
+    -- and _k ~= 'PITCH_MOD' 
+    -- and _k ~= 'SPLASH_VOL' 
+    -- and _k ~= 'boss_throw_hand' 
+    -- and _k ~= 'ACC' 
+    -- and _k ~= 'ACHIEVEMENTS' 
+    -- and _k ~= 'ID' 
+    -- and _k ~= 'E_SWITCH_POINT' 
+    -- and _k ~= 'REFRESH_FRAME_MAJOR_CACHE' 
+    -- and _k ~= 'new_frame' then
+    --     print('k: '..tostring(_k))
+    --     print('v: '..tostring(_v))
+    -- end
+
+    if _k == 'STATE' then
+        if G.hand and G.hand.cards then
+            print('hand card#'..tostring(#G.hand.cards))
+            print('G.hand.config.card_limit <= 0'..tostring(G.hand.config.card_limit <= 0))
+        end
+        local any_thing_could_do = {BalatrobotAPI.ACTIONS.SELL_CONSUMABLE, BalatrobotAPI.ACTIONS.SELL_JOKER, BalatrobotAPI.ACTIONS.REARRANGE_JOKERS}
+
+        if _v == G.STATES.MENU then
+            BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.START_RUN}
+            BalatrobotAPI.waitingForAction = true
+        end
+
+        if _v == G.STATES.SELECTING_HAND then
+            BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.PLAY_HAND,  BalatrobotAPI.ACTIONS.DISCARD_HAND, unpack(any_thing_could_do)}
+            BalatrobotAPI.waitingForAction = true
+        end
+
+        if _v == G.STATES.NEW_ROUND then
+            BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.CASH_OUT}
+            BalatrobotAPI.waitingForAction = true
+        end
+
+        if _v == G.STATES.SHOP then
+            BalatrobotAPI.waitingFor = {
+                BalatrobotAPI.ACTIONS.END_SHOP, 
+                BalatrobotAPI.ACTIONS.REROLL_SHOP, 
+                BalatrobotAPI.ACTIONS.BUY_BOOSTER, 
+                BalatrobotAPI.ACTIONS.BUY_CARD, 
+                BalatrobotAPI.ACTIONS.BUY_VOUCHER, 
+                unpack(any_thing_could_do)
+            }
+            BalatrobotAPI.waitingForAction = true
+        end
+
+        if _v == G.STATES.SMODS_BOOSTER_OPENED then
+            BalatrobotAPI.waitingFor = {
+                BalatrobotAPI.ACTIONS.SELECT_BOOSTER_CARD,
+                BalatrobotAPI.ACTIONS.USE_CONSUMABLE,
+                unpack(any_thing_could_do)
+            }
+            BalatrobotAPI.waitingForAction = true
+        end
     end
+    return _k, _v
 end
 
 local function c_initgamehooks()
@@ -452,27 +441,19 @@ local function c_initgamehooks()
     -- end)
 
     -- Hook button snaps
-    -- G.CONTROLLER.snap_to = Hook.addcallback(G.CONTROLLER.snap_to, function(...)
-    --     local _self = ...
+    G.CONTROLLER.snap_to = Hook.addcallback(G.CONTROLLER.snap_to, function(...)
+        local _self = ...
 
-    --     if _self and _self.snap_cursor_to.node and _self.snap_cursor_to.node.config and _self.snap_cursor_to.node.config.button then
+        if _self and _self.snap_cursor_to.node and _self.snap_cursor_to.node.config and _self.snap_cursor_to.node.config.button then
             
-    --         local _button = _self.snap_cursor_to.node
-    --         local _buttonfunc = _self.snap_cursor_to.node.config.button
+            local _button = _self.snap_cursor_to.node
+            local _buttonfunc = _self.snap_cursor_to.node.config.button
 
-    --         if _buttonfunc == 'select_blind' and G.STATE == G.STATES.BLIND_SELECT then
-    --             Middleware.c_select_blind()
-    --         elseif _buttonfunc == 'cash_out' then
-    --             pushbutton(_button)
-    --         elseif _buttonfunc == 'toggle_shop' and G.shop ~= nil then -- 'next_round_button'
-    --             Middleware.BUTTONS.NEXT_ROUND = _button
-
-    --             firewhenready(function()
-    --                 return G.shop ~= nil and G.STATE_COMPLETE and G.STATE == G.STATES.SHOP
-    --             end, Middleware.c_shop)
-    --         end
-    --     end
-    -- end)
+            if _buttonfunc == 'cash_out' then
+                Middleware.BUTTONS.CASH_OUT = _button
+            end
+        end
+    end)
 
     -- Toggle shop
     -- G.FUNCS.toggle_shop = Hook.addcallback(G.FUNCS.toggle_shop, function(...)
@@ -506,8 +487,8 @@ function Middleware.hookbalatro()
 
     -- Start game from main menu
     G.start_run = Hook.addcallback(G.start_run, c_initgamehooks)
-    -- G = Hook.addonwrite(G, w_gamestate)
     G.update = Hook.addcallback(G.update, c_update)
+    -- G = Hook.addonwrite(G, w_gamestate) -- bug found
 end
 
 return Middleware

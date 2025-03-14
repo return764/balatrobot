@@ -11,6 +11,7 @@ BalatrobotAPI.waitingForAction = true
 
 -- 完整的动作定义
 BalatrobotAPI.ACTIONS = {
+    GET_GAMESTATE = 0,
     SELECT_BLIND = 1,
     SKIP_BLIND = 2,
     PLAY_HAND = 3,
@@ -30,6 +31,7 @@ BalatrobotAPI.ACTIONS = {
     REARRANGE_HAND = 17,
     PASS = 18,
     START_RUN = 19,
+    CASH_OUT = 20
 }
 
 -- 完整的动作参数定义
@@ -262,22 +264,33 @@ BalatrobotAPI.ACTIONPARAMS = {
 
             return false
         end,
+    },
+    [BalatrobotAPI.ACTIONS.CASH_OUT] = {
+        num_args = 0,
+        func = "c_cash_out",
+        isvalid = function()
+            if G and G.STATE == G.STATES.ROUND_EVAL and G.round_eval and Middleware.BUTTONS.CASH_OUT then 
+                return true
+            end
+
+            return false
+        end,
     }
 }
 
 function BalatrobotAPI.notifyapiclient()
     -- 只在状态改变时发送通知
     local _gamestate = Utils.getGamestate()
-    if BalatrobotAPI.last_state ~= _gamestate.state then
-        BalatrobotAPI.last_state = _gamestate.state
-        _gamestate.waitingFor = BalatrobotAPI.waitingFor
-        _gamestate.waitingForAction = BalatrobotAPI.waitingFor ~= nil and BalatrobotAPI.waitingForAction or false
-        local _gamestateJsonString = json.encode(_gamestate)
+    -- if BalatrobotAPI.last_state ~= _gamestate.state then
+    --     BalatrobotAPI.last_state = _gamestate.state
+    -- end
+    _gamestate.waitingFor = BalatrobotAPI.waitingFor
+    _gamestate.waitingForAction = BalatrobotAPI.waitingFor ~= nil and BalatrobotAPI.waitingForAction or false
+    local _gamestateJsonString = json.encode(_gamestate)
 
-        if BalatrobotAPI.socket and port_or_nil ~= nil then
-            sendDebugMessage(_gamestateJsonString)
-            BalatrobotAPI.socket:sendto(string.format("%s", _gamestateJsonString), msg_or_ip, port_or_nil)
-        end
+    if BalatrobotAPI.socket and port_or_nil ~= nil then
+        sendDebugMessage(_gamestateJsonString)
+        BalatrobotAPI.socket:sendto(string.format("%s", _gamestateJsonString), msg_or_ip, port_or_nil)
     end
 end
 
@@ -310,6 +323,45 @@ function BalatrobotAPI.executeAction(action)
 end
 
 function BalatrobotAPI.update(dt)
+
+    local any_thing_could_do = {BalatrobotAPI.ACTIONS.SELL_CONSUMABLE, BalatrobotAPI.ACTIONS.SELL_JOKER, BalatrobotAPI.ACTIONS.REARRANGE_JOKERS}
+
+    if G.STATE == G.STATES.MENU then
+        BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.START_RUN}
+        BalatrobotAPI.waitingForAction = true
+    end
+
+    if G.STATE == G.STATES.SELECTING_HAND then
+        BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.PLAY_HAND,  BalatrobotAPI.ACTIONS.DISCARD_HAND, unpack(any_thing_could_do)}
+        BalatrobotAPI.waitingForAction = true
+    end
+
+    if G.STATE == G.STATES.NEW_ROUND then
+        BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.CASH_OUT}
+        BalatrobotAPI.waitingForAction = true
+    end
+
+    if G.STATE == G.STATES.SHOP then
+        BalatrobotAPI.waitingFor = {
+            BalatrobotAPI.ACTIONS.END_SHOP, 
+            BalatrobotAPI.ACTIONS.REROLL_SHOP, 
+            BalatrobotAPI.ACTIONS.BUY_BOOSTER, 
+            BalatrobotAPI.ACTIONS.BUY_CARD, 
+            BalatrobotAPI.ACTIONS.BUY_VOUCHER, 
+            unpack(any_thing_could_do)
+        }
+        BalatrobotAPI.waitingForAction = true
+    end
+
+    if G.STATE == G.STATES.SMODS_BOOSTER_OPENED then
+        BalatrobotAPI.waitingFor = {
+            BalatrobotAPI.ACTIONS.SELECT_BOOSTER_CARD,
+            BalatrobotAPI.ACTIONS.USE_CONSUMABLE,
+            unpack(any_thing_could_do)
+        }
+        BalatrobotAPI.waitingForAction = true
+    end
+
     if not BalatrobotAPI.socket then
         sendDebugMessage('new socket')
         BalatrobotAPI.socket = socket.udp()
@@ -319,9 +371,13 @@ function BalatrobotAPI.update(dt)
     end
 
     data, msg_or_ip, port_or_nil = BalatrobotAPI.socket:receivefrom()
+
     if data then
-        print('state: '..tostring(G.STATE))
         local _action = Utils.parseaction(data)
+        if _action and _action[1] == BalatrobotAPI.ACTIONS.GET_GAMESTATE then
+            BalatrobotAPI.notifyapiclient()
+            return
+        end
         local _err = Utils.validateAction(_action)
 
         if _err == Utils.ERROR.NUMPARAMS then
@@ -395,48 +451,77 @@ function BalatrobotAPI.init()
     end
     
     sendDebugMessage('init api')
-    if Bot.SETTINGS.api == true then
-        Middleware.c_play_hand = Hook.addbreakpoint(Middleware.c_play_hand, function()
-            BalatrobotAPI.waitingFor = 'select_cards_from_hand'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_select_blind = Hook.addbreakpoint(Middleware.c_select_blind, function()
-            BalatrobotAPI.waitingFor = 'skip_or_select_blind'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_choose_booster_cards = Hook.addbreakpoint(Middleware.c_choose_booster_cards, function()
-            BalatrobotAPI.waitingFor = 'select_booster_action'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_shop = Hook.addbreakpoint(Middleware.c_shop, function()
-            sendDebugMessage('SELECT SHOP ACTION')
-            BalatrobotAPI.waitingFor = 'select_shop_action'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_rearrange_hand = Hook.addbreakpoint(Middleware.c_rearrange_hand, function()
-            BalatrobotAPI.waitingFor = 'rearrange_hand'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_rearrange_consumables = Hook.addbreakpoint(Middleware.c_rearrange_consumables, function()
-            BalatrobotAPI.waitingFor = 'rearrange_consumables'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_use_or_sell_consumables = Hook.addbreakpoint(Middleware.c_use_or_sell_consumables, function()
-            BalatrobotAPI.waitingFor = 'use_or_sell_consumables'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_rearrange_jokers = Hook.addbreakpoint(Middleware.c_rearrange_jokers, function()
-            BalatrobotAPI.waitingFor = 'rearrange_jokers'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_sell_jokers = Hook.addbreakpoint(Middleware.c_sell_jokers, function()
-            BalatrobotAPI.waitingFor = 'sell_jokers'
-            BalatrobotAPI.waitingForAction = true
-        end)
-        Middleware.c_start_run = Hook.addbreakpoint(Middleware.c_start_run, function()
-            BalatrobotAPI.waitingFor = 'start_run'
-            BalatrobotAPI.waitingForAction = true
-        end)
+    if Middleware.SETTINGS.api == true then
+        -- local any_thing_could_do = {BalatrobotAPI.ACTIONS.SELL_CONSUMABLE, BalatrobotAPI.ACTIONS.SELL_JOKER, BalatrobotAPI.ACTIONS.REARRANGE_JOKERS}
+        -- local shop_could_do = {BalatrobotAPI.ACTIONS.END_SHOP, 
+        -- BalatrobotAPI.ACTIONS.REROLL_SHOP, 
+        -- BalatrobotAPI.ACTIONS.BUY_BOOSTER, 
+        -- BalatrobotAPI.ACTIONS.BUY_CARD, 
+        -- BalatrobotAPI.ACTIONS.BUY_VOUCHER}
+        -- Middleware.c_play_hand = Hook.addbreakpoint(Middleware.c_play_hand, function()
+        --     BalatrobotAPI.waitingFor = 'select_cards_from_hand'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_discard_hand = Hook.addbreakpoint(Middleware.c_discard_hand, function()
+        --     BalatrobotAPI.waitingFor = 'skip_or_select_blind'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_select_blind = Hook.addbreakpoint(Middleware.c_select_blind, function()
+        --     BalatrobotAPI.waitingFor = 'select_booster_action'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_skip_blind = Hook.addbreakpoint(Middleware.c_skip_blind, function()
+        --     BalatrobotAPI.waitingFor = 'select_shop_action'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_choose_booster_cards = Hook.addbreakpoint(Middleware.c_choose_booster_cards, function()
+        --     BalatrobotAPI.waitingFor = 'rearrange_hand'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_skip_booster = Hook.addbreakpoint(Middleware.c_skip_booster, function()
+        --     BalatrobotAPI.waitingFor = 'rearrange_consumables'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_buy_card = Hook.addbreakpoint(Middleware.c_buy_card, function()
+        --     BalatrobotAPI.waitingFor = 'use_or_sell_consumables'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_buy_vouchers = Hook.addbreakpoint(Middleware.c_buy_vouchers, function()
+        --     BalatrobotAPI.waitingFor = 'rearrange_jokers'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_buy_booster = Hook.addbreakpoint(Middleware.c_buy_booster, function()
+        --     BalatrobotAPI.waitingFor = 'sell_jokers'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_reroll_shop = Hook.addbreakpoint(Middleware.c_reroll_shop, function()
+        --     BalatrobotAPI.waitingFor = 'start_run'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_end_shop = Hook.addbreakpoint(Middleware.c_end_shop, function()
+        --     BalatrobotAPI.waitingFor = 'start_run'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_use_consumable_card = Hook.addbreakpoint(Middleware.c_use_consumable_card, function()
+        --     BalatrobotAPI.waitingFor = 'start_run'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_sell_consumable_card = Hook.addbreakpoint(Middleware.c_sell_consumable_card, function()
+        --     BalatrobotAPI.waitingFor = 'start_run'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_sell_jokers = Hook.addbreakpoint(Middleware.c_sell_jokers, function()
+        --     BalatrobotAPI.waitingFor = 'start_run'
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_cash_out = Hook.addbreakpoint(Middleware.c_cash_out, function()
+        --     BalatrobotAPI.waitingFor = { unpack(shop_could_do), unpack(any_thing_could_do) }
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
+        -- Middleware.c_start_run = Hook.addbreakpoint(Middleware.c_start_run, function()
+        --     BalatrobotAPI.waitingFor = { BalatrobotAPI.ACTIONS.SELECT_BLIND, BalatrobotAPI.ACTIONS.SKIP_BLIND, unpack(any_thing_could_do) }
+        --     BalatrobotAPI.waitingForAction = true
+        -- end)
     end
 end
 
