@@ -4,9 +4,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 
-from bot import Actions
+from action import Actions
 from config import AI_CONFIG
-
+from prompt import get_current_action_example, play_hand_prompt, shop_prompt, error_prompt
 
 class AiDecision(BaseModel):
     action: str = Field(description="action to take")
@@ -16,11 +16,13 @@ class AiDecision(BaseModel):
 
 class LLMExecutor:
     def __init__(self):
+        self.latest_game_state = None
         self.llm = ChatOpenAI(
             base_url=AI_CONFIG["base_url"],
             api_key=AI_CONFIG["api_key"],
             model=AI_CONFIG["model"],
-        )
+        ).with_structured_output(None, method="json_mode")
+        
         self.decision_prompt = PromptTemplate.from_template(
             """
             你是一名小丑牌（Balatro）游戏大师，目标是在有限的回合内，通过打出手牌组成不同牌型来击败盲注并完成关卡。以下是游戏的基本规则和流程：
@@ -119,146 +121,73 @@ class LLMExecutor:
             - 玩家在有限的出牌次数内，得分超过当前盲注的分数，即可进入下一回合。通过第8回合时，游戏通关。
             - 如果玩家未能在规定次数内击败盲注，则游戏失败。
 
-            当前游戏状态:
-            {game_state}
+            ---
+            {game_step_prompt}
 
-            游戏状态schema如下:
-
-            $card:
-                type: object
-                properties:
-                    label:
-                        description: 卡牌名称
-                    card_key:
-                        description: 卡牌(H_A红桃A, S_1黑桃1, C_4梅花4, D_J方片J)
-                    edition:
-                        required: false
-                        description: holo: 加10倍率, foil: 加50筹码, polychrome: 倍率乘1.5倍, negative: 增加一个消耗槽位
-                    enhance:
-                        required: false
-                        description: m_gold: 黄金牌, m_bonus: 奖励牌, m_glass: 玻璃牌, m_lucky: 幸运牌, m_mult: 倍率牌, m_steel: 钢铁牌, m_stone: 石头牌, m_wild: 万能牌
-                    sell_cost:
-                        required: false
-                        description: 出售价格
-                    cost:
-                        required: false
-                        description: 购买价格
-
-            consumables: 
-                type: array
-                items:
-                    type: object
-                    reference: $card
-            deck:
-                type: array
-                description: 剩余牌组
-                items:
-                    type: object
-                    reference: $card
-            hand:
-                type: array
-                description: 手牌，能打出的牌
-                items:
-                    type: object
-                    reference: $card
-            shop:
-                type: object
-                properties:
-                    boosters:
-                        type: array
-                        items:
-                            type: object
-                            reference: $card
-                    vouchers:
-                        type: array
-                        items:
-                            type: object
-                            reference: $card
-                    cards:
-                        type: array
-                        items:
-                            type: object
-                            reference: $card
-                    reroll_cost:
-                        description: 重置商店价格
-            jokers:
-                type: array
-                items:
-                    type: object
-                    reference: $card
-            chips:
-                description: 当前得分
-            state:
-                description: 当前游戏状态
-            max_jokers:
-                description: 最大小丑牌数量
-            dollars:
-                description: 当前的存款
-            round:
-                description: 当前回合数
-            current_round:
-                type: object
-                properties:
-                    hands_left:
-                        description: 当前回合剩余出牌次数
-                    discards_left:
-                        description: 当前回合剩余弃牌次数
-            tags:
-                description: 本局游戏拥有的标签(暂不支持)
-            ante:
-                type: object
-                properties:
-                    blinds:
-                        type: object
-                        properties:
-                            chips:
-                                description: 击败该盲注所需分数
-                            ondeck:
-                                description: 盲注类型(Small, Big, Boss)
-            waitingForAction:
-                description: 等待决策
-            waitingFor:
-                description: 现在能做的决策类型
             可用动作:
             {available_actions}
 
-            请选择一个动作并给出具体参数, params的index以1开始。按json格式返回, 只返回json, 例如:
-            eg1:
-            {{
-                "action": 'SELECT_BLIND',
-                "params": null,
-                "reason": ""
-            }}
-            eg2:
-            {{
-                "action": 'PLAY_HAND',
-                "params": [1,2,3],
-                "reason": "出这三张牌的原因是..."
-            }}
-            eg3:
-            {{
-                "action": 'USE_CONSUMABLE',
-                "params": ["Mercury", [1,2,3]],
-                "reason": "使用这张消耗牌的原因是..."
-            }}
+            请选择一个动作并给出具体参数, params的index以1开始。 例如:
+            {action_examples}
+            --- 
+            {error_prompt}
+
+            ---
+            使用json格式返回
             """
         )
 
     def get_ai_decision(self, game_state):
         """使用 LLM 获取决策"""
         try:
-            parser = JsonOutputParser(pydantic_object=AiDecision)
+            error = game_state.get("error")
+            error_action = game_state.get("action")
             # 调用 LLM 获取决策
-            llm_chain = self.decision_prompt | self.llm | parser
-            # 准备输入参数
-            prompt_input = {
-                "game_state": game_state,
-                "available_actions": game_state.get("waitingFor", [])
-            }
+            llm_chain = self.decision_prompt | self.llm
             
-            # 获取 LLM 响应
-            response = llm_chain.invoke(prompt_input)
+            # 检查是否有错误
+            if not error:
+                self.latest_game_state = game_state
+            else:
+                game_state = self.latest_game_state
 
+            waiting_for_aciton = game_state.get("waitingFor", [])
+
+            if error_action is not None:
+                waiting_for_aciton.remove(Actions.from_value(error_action).name)
+
+            state = game_state.get("state", 999)
+
+            game_step_prompt = None
+            if state == 1:
+                game_step_prompt = play_hand_prompt.invoke({
+                "hand_count": len(game_state.get("hand", [])),
+                "hands_left": game_state.get("current_round").get("hands_left", 0),
+                "discards_left": game_state.get("current_round").get("discards_left", 0),
+                "chips": game_state.get("chips", 0),
+                "target_chips": game_state.get("ante").get("blinds").get("chips", 0),
+                "hand": game_state.get("hand", [])
+            })
+            elif state == 5:
+                game_step_prompt = shop_prompt.invoke({
+                "boosters": game_state.get("shop").get("boosters", []),
+                "vouchers": game_state.get("shop").get("vouchers", []),
+                "cards": game_state.get("shop").get("cards", []),
+                "dollars": game_state.get("dollars", 0),
+                "reroll_cost": game_state.get("shop").get("reroll_cost", 0)
+            })
+
+            # 获取 LLM 响应
+            response = llm_chain.invoke({
+                "game_step_prompt": game_step_prompt if game_step_prompt else "",
+                "available_actions": waiting_for_aciton,
+                "action_examples": get_current_action_example(waiting_for_aciton),
+                "error_prompt": error_prompt.invoke({
+                    "error_message": error
+                }) if error else None
+            })
+
+            print(f"LLM 响应: {response}")
             # 解析响应获取 action 和 params
             try:
                 action = getattr(Actions, response["action"])
@@ -266,7 +195,6 @@ class LLMExecutor:
                 if params is None:
                     return [action]
                 return [action, params]
-                    
                     
             except json.JSONDecodeError:
                 print("LLM响应格式错误")

@@ -8,7 +8,8 @@ import queue
 from enum import Enum
 import random
 
-from ai import AiDecision, LLMExecutor
+from ai import LLMExecutor
+from action import Actions
 
 # 1 选牌 -> 2 记分 -> 3 发牌 -> 1 选牌
 # 19 下一轮 -> 8 点击收钱 -> 5 进入商店
@@ -34,30 +35,6 @@ class State(Enum):
     STANDARD_PACK = 17
     BUFFOON_PACK = 18
     NEW_ROUND = 19
-
-
-class Actions(Enum):
-    GET_GAMESTATE = 0
-    SELECT_BLIND = 1 #
-    SKIP_BLIND = 2 #
-    PLAY_HAND = 3 #
-    DISCARD_HAND = 4 #
-    END_SHOP = 5 #
-    REROLL_SHOP = 6 #
-    BUY_CARD = 7 #
-    BUY_VOUCHER = 8 #?
-    BUY_BOOSTER = 9 #?
-    SELECT_BOOSTER_CARD = 10 #
-    SKIP_BOOSTER_PACK = 11 #
-    SELL_JOKER = 12 #
-    USE_CONSUMABLE = 13 #
-    SELL_CONSUMABLE = 14 #
-    REARRANGE_JOKERS = 15 #
-    REARRANGE_CONSUMABLES = 16 # no required
-    REARRANGE_HAND = 17 # no required
-    PASS = 18 # ?
-    START_RUN = 19 # no required
-    CASH_OUT = 20
 
 
 class Bot:
@@ -117,6 +94,10 @@ class Bot:
                 jsondata = json.loads(data)
                 print(f"Received message: {jsondata}")
                 
+                if jsondata.get("error"):
+                    self.game_state_queue.put(jsondata)
+                    continue
+
                 # 如果需要决策,将游戏状态放入队列
                 if jsondata.get("waitingForAction", True):
                     self.game_state_queue.put(jsondata)
