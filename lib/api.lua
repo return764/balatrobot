@@ -7,7 +7,7 @@ BalatrobotAPI.socket = nil
 BalatrobotAPI.last_state = nil
 
 BalatrobotAPI.waitingFor = nil
-BalatrobotAPI.waitingForAction = true
+BalatrobotAPI.waitingForAction = false
 
 -- 完整的动作定义
 BalatrobotAPI.ACTIONS = {
@@ -324,42 +324,51 @@ end
 
 function BalatrobotAPI.update(dt)
 
-    local any_thing_could_do = {BalatrobotAPI.ACTIONS.SELL_CONSUMABLE, BalatrobotAPI.ACTIONS.SELL_JOKER, BalatrobotAPI.ACTIONS.REARRANGE_JOKERS}
+    if not BalatrobotAPI.waitingForAction then
+        local any_thing_could_do = {"SELL_CONSUMABLE", "SELL_JOKER", "REARRANGE_JOKERS"}
 
-    if G.STATE == G.STATES.MENU then
-        BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.START_RUN}
-        BalatrobotAPI.waitingForAction = true
-    end
+        if G.STATE == G.STATES.MENU then
+            BalatrobotAPI.waitingFor = {"START_RUN"}
+            BalatrobotAPI.waitingForAction = true
+        end
 
-    if G.STATE == G.STATES.SELECTING_HAND then
-        BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.PLAY_HAND,  BalatrobotAPI.ACTIONS.DISCARD_HAND, unpack(any_thing_could_do)}
-        BalatrobotAPI.waitingForAction = true
-    end
+        if G.STATE == G.STATES.BLIND_SELECT then
+            BalatrobotAPI.waitingFor = {"SELECT_BLIND", "SKIP_BLIND", unpack(any_thing_could_do)}
+            BalatrobotAPI.waitingForAction = true
+        end
 
-    if G.STATE == G.STATES.NEW_ROUND then
-        BalatrobotAPI.waitingFor = {BalatrobotAPI.ACTIONS.CASH_OUT}
-        BalatrobotAPI.waitingForAction = true
-    end
+        if G.STATE == G.STATES.SELECTING_HAND then
+            BalatrobotAPI.waitingFor = {"PLAY_HAND", "DISCARD_HAND", unpack(any_thing_could_do)}
+            BalatrobotAPI.waitingForAction = true
+        end
 
-    if G.STATE == G.STATES.SHOP then
-        BalatrobotAPI.waitingFor = {
-            BalatrobotAPI.ACTIONS.END_SHOP, 
-            BalatrobotAPI.ACTIONS.REROLL_SHOP, 
-            BalatrobotAPI.ACTIONS.BUY_BOOSTER, 
-            BalatrobotAPI.ACTIONS.BUY_CARD, 
-            BalatrobotAPI.ACTIONS.BUY_VOUCHER, 
-            unpack(any_thing_could_do)
-        }
-        BalatrobotAPI.waitingForAction = true
-    end
+        if G.STATE == G.STATES.NEW_ROUND then
+            BalatrobotAPI.waitingFor = {"CASH_OUT"}
+            BalatrobotAPI.waitingForAction = true
+        end
 
-    if G.STATE == G.STATES.SMODS_BOOSTER_OPENED then
-        BalatrobotAPI.waitingFor = {
-            BalatrobotAPI.ACTIONS.SELECT_BOOSTER_CARD,
-            BalatrobotAPI.ACTIONS.USE_CONSUMABLE,
-            unpack(any_thing_could_do)
-        }
-        BalatrobotAPI.waitingForAction = true
+        if G.STATE == G.STATES.SHOP then
+            BalatrobotAPI.waitingFor = {
+                "END_SHOP",
+                "REROLL_SHOP", 
+                "BUY_BOOSTER",
+                "BUY_CARD",
+                "BUY_VOUCHER",
+                unpack(any_thing_could_do)
+            }
+            BalatrobotAPI.waitingForAction = true
+        end
+
+        if G.STATE == G.STATES.SMODS_BOOSTER_OPENED then
+            BalatrobotAPI.waitingFor = {
+                "SELECT_BOOSTER_CARD",
+                "USE_CONSUMABLE",
+                unpack(any_thing_could_do)
+            }
+            BalatrobotAPI.waitingForAction = true
+        end
+
+        BalatrobotAPI.notifyapiclient()
     end
 
     if not BalatrobotAPI.socket then
@@ -449,6 +458,8 @@ function BalatrobotAPI.init()
             original_present()
         end
     end
+
+    _RELEASE_MODE = false
     
     sendDebugMessage('init api')
     if Middleware.SETTINGS.api == true then

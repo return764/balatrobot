@@ -1,23 +1,53 @@
 Utils = { }
 
-function Utils.getCardData(card)
+function Utils.getUseableCardData(card)
     local _card = { }
 
     _card.label = card.label
-    _card.name = card.config.card.name
-    _card.suit = card.config.card.suit
-    _card.value = card.config.card.value
+    _card.edition = card.edition and card.edition.type
+    _card.card_key = card.config.card_key
+    _card.sell_cost = card.sell_cost
+
+    return _card
+end
+
+
+function Utils.getShopCardData(card)
+    local _card = { }
+
+    _card.label = card.label
+    _card.edition = card.edition and card.edition.type
+    _card.card_key = card.config.card_key
+    _card.sell_cost = card.sell_cost
+    _card.cost = card.cost
+
+    return _card
+end
+
+function Utils.getHandCardData(card)
+    local _card = { }
+
+    -- _card.label = card.label
+    -- _card.name = card.config.card.name
+    -- _card.suit = card.config.card.suit
+    -- _card.value = card.config.card.value
+    _card.edition = card.edition and card.edition.type
+    if card.config.center_key ~= 'c_base' then
+        _card.enhance = card.config.center_key
+    end
+    _card.seal = card.seal
     _card.card_key = card.config.card_key
 
     return _card
 end
+
 
 function Utils.getDeckData()
     local _deck = { }
 
     if G and G.deck and G.deck.cards then
         for i = 1, #G.deck.cards do
-            local _card = Utils.getCardData(G.deck.cards[i])
+            local _card = Utils.getHandCardData(G.deck.cards[i])
             _deck[i] = _card
         end
     end
@@ -30,7 +60,7 @@ function Utils.getHandData()
 
     if G and G.hand and G.hand.cards then
         for i = 1, #G.hand.cards do
-            local _card = Utils.getCardData(G.hand.cards[i])
+            local _card = Utils.getHandCardData(G.hand.cards[i])
             _hand[i] = _card
         end
     end
@@ -43,7 +73,7 @@ function Utils.getJokersData()
 
     if G and G.jokers and G.jokers.cards then
         for i = 1, #G.jokers.cards do
-            local _card = Utils.getCardData(G.jokers.cards[i])
+            local _card = Utils.getUseableCardData(G.jokers.cards[i])
             _jokers[i] = _card
         end
     end
@@ -56,7 +86,7 @@ function Utils.getConsumablesData()
 
     if G and G.consumeables and G.consumeables.cards then
         for i = 1, #G.consumeables.cards do
-            local _card = Utils.getCardData(G.consumeables.cards[i])
+            local _card = Utils.getUseableCardData(G.consumeables.cards[i])
             _consumables[i] = _card
         end
     end
@@ -98,15 +128,15 @@ function Utils.getShopData()
     _shop.vouchers = { }
 
     for i = 1, #G.shop_jokers.cards do
-        _shop.cards[i] = Utils.getCardData(G.shop_jokers.cards[i])
+        _shop.cards[i] = Utils.getShopCardData(G.shop_jokers.cards[i])
     end
 
     for i = 1, #G.shop_booster.cards do
-        _shop.boosters[i] = Utils.getCardData(G.shop_booster.cards[i])
+        _shop.boosters[i] = Utils.getShopCardData(G.shop_booster.cards[i])
     end
 
     for i = 1, #G.shop_vouchers.cards do
-        _shop.vouchers[i] = Utils.getCardData(G.shop_vouchers.cards[i])
+        _shop.vouchers[i] = Utils.getShopCardData(G.shop_vouchers.cards[i])
     end
 
     return _shop

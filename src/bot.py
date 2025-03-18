@@ -4,8 +4,11 @@ import json
 import socket
 import threading
 import time
+import queue
 from enum import Enum
 import random
+
+from ai import AiDecision, LLMExecutor
 
 # 1 选牌 -> 2 记分 -> 3 发牌 -> 1 选牌
 # 19 下一轮 -> 8 点击收钱 -> 5 进入商店
@@ -72,11 +75,15 @@ class Bot:
         self.seed = seed
         self.challenge = challenge
 
+        self.decision_event = threading.Event()
+        self.game_state_queue = queue.Queue()
+
         self.bot_port = bot_port
 
         self.addr = ("localhost", self.bot_port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.running = False
+        self.llm_executor = LLMExecutor()
 
         self.state = {}
         self.last_state = None
@@ -102,26 +109,43 @@ class Bot:
         # e.g. 1OGB5WO
         return "".join(random.choices("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", k=7))
 
-
     def receive_thread(self):
         while self.running:
             try:
-                # 尝试接收数据
+                print("receive_thread")
                 data = self.sock.recv(65536)
                 jsondata = json.loads(data)
                 print(f"Received message: {jsondata}")
+                
+                # 如果需要决策,将游戏状态放入队列
+                if jsondata.get("waitingForAction", True):
+                    self.game_state_queue.put(jsondata)
 
             except Exception as e:
                 print(f"Error in receive thread: {e}")
-                self.running = False
+                self.running = False        
 
     def send_thread(self):
+        self.send_action([Actions.GET_GAMESTATE])
         while self.running:
-            # 模拟发送消息
-            self.send_action([Actions.GET_GAMESTATE])
-            #self.send_action([Actions.REARRANGE_JOKERS, [2, 1]])
-            time.sleep(2)  # 每秒发送一次
-            
+            try:
+                # 从队列获取游戏状态
+                game_state = self.game_state_queue.get()  # 使用阻塞的 get
+                
+                # 获取 AI 决策
+                action = self.llm_executor.get_ai_decision(game_state)
+                print(f"AI 决策: {action}")
+                
+                if action:
+                    # 发送决策动作
+                    self.send_action(action)
+                    time.sleep(3)
+                else:
+                    print("AI 未能做出有效决策")
+                    
+            except Exception as e:
+                print(f"Error in send thread: {e}")
+                
 
     def send_action(self, action):
         cmdstr = self.actionToCmd(action)

@@ -78,7 +78,6 @@ end
 
 local function pushbutton(button, delay)
     queueaction(function()
-        print('button: '..tostring(button))
         if button and button.config and button.config.button then
             G.FUNCS[button.config.button](button)
         end
